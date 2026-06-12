@@ -66,29 +66,6 @@ def get_all_company_tickers():
     return sorted(set(STOCKS_DB.values()))
 
 
-def get_company_keyboard(command, chat_id=None, extra_data="", companies=None):
-    if companies is None:
-        companies = get_all_company_tickers()
-    keyboard = []
-    row = []
-
-    for ticker in companies:
-        display_name = ticker.replace(".NS", "")
-        callback_data = f"{command}:{ticker}"
-        if extra_data:
-            callback_data += f":{extra_data}"
-            
-        row.append(InlineKeyboardButton(display_name, callback_data=callback_data))
-        if len(row) == 2:
-            keyboard.append(row)
-            row = []
-            
-    if row:
-        keyboard.append(row)
-        
-    return InlineKeyboardMarkup(keyboard)
-
-
 # -------------------------
 # STATE MANAGEMENT (IN-MEMORY)
 # -------------------------
@@ -306,7 +283,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 /stop_monitor_weekly - Stop weekly alerts\n"
         "🔹 /stop_monitor_daily - Stop daily alerts\n"
         "🔹 /stop_monitor_monthly - Stop monthly alerts\n\n"
-        "💡 *Tip:* You don't need to type the exact ticker! You can just type `/price reliance` and I will find it for you."
+        "💡 *Tip:* Type the company name directly after the command, like `/signal TCS` or `/set_breakout_daily Reliance 2500`."
         + FOOTER,
         parse_mode="Markdown"
     )
@@ -372,11 +349,7 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         chat_id = update.message.chat_id
         set_pending_action(chat_id, "price")
-        reply_markup = get_company_keyboard("price", chat_id)
-        await update.message.reply_text(
-            "Send a company name or tap one below:",
-            reply_markup=reply_markup
-        )
+        await update.message.reply_text("Send a company name, for example: /price TCS")
         return
         
     ticker_input = " ".join(context.args)
@@ -421,11 +394,7 @@ async def weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         chat_id = update.message.chat_id
         set_pending_action(chat_id, "weekly")
-        reply_markup = get_company_keyboard("weekly", chat_id)
-        await update.message.reply_text(
-            "Send a company name or tap one below:",
-            reply_markup=reply_markup
-        )
+        await update.message.reply_text("Send a company name, for example: /weekly TCS")
         return
         
     ticker_input = " ".join(context.args)
@@ -437,11 +406,7 @@ async def daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         chat_id = update.message.chat_id
         set_pending_action(chat_id, "daily")
-        reply_markup = get_company_keyboard("daily", chat_id)
-        await update.message.reply_text(
-            "Send a company name or tap one below:",
-            reply_markup=reply_markup
-        )
+        await update.message.reply_text("Send a company name, for example: /daily TCS")
         return
 
     ticker_input = " ".join(context.args)
@@ -453,11 +418,7 @@ async def monthly(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         chat_id = update.message.chat_id
         set_pending_action(chat_id, "monthly")
-        reply_markup = get_company_keyboard("monthly", chat_id)
-        await update.message.reply_text(
-            "Send a company name or tap one below:",
-            reply_markup=reply_markup
-        )
+        await update.message.reply_text("Send a company name, for example: /monthly TCS")
         return
 
     ticker_input = " ".join(context.args)
@@ -517,25 +478,18 @@ async def handle_breakout_signal(message, chat_id, ticker, timeframe, is_callbac
             await message.reply_text(f"Error: {str(e)}")
 
 
-async def request_timeframe_company(update, context, action, timeframe, tracked_only=False):
+async def request_timeframe_company(update, context, action, timeframe):
     chat_id = update.message.chat_id
-    set_pending_action(chat_id, f"{action}_{timeframe}" if timeframe != "weekly" or action in {"signal", "breakdown", "set", "monitor", "stop_monitor"} else action)
-    if tracked_only:
-        companies = list(get_timeframe_state(chat_id, timeframe).keys())
-    else:
-        companies = get_all_company_tickers()
-    reply_markup = get_company_keyboard(f"{action}_{timeframe}", chat_id, companies=companies)
-    if not companies:
-        await update.message.reply_text(f"You are not tracking any {timeframe} companies yet." + FOOTER)
-        return False
-    await update.message.reply_text("Send a company name or tap one below:", reply_markup=reply_markup)
+    set_pending_action(chat_id, f"{action}_{timeframe}")
+    await update.message.reply_text(
+        f"Send a company name, for example: /{action}_{timeframe} TCS"
+    )
     return True
 
 
 async def handle_timeframe_signal_command(update: Update, context: ContextTypes.DEFAULT_TYPE, timeframe):
     if not context.args:
-        if await request_timeframe_company(update, context, "signal", timeframe, tracked_only=True):
-            return
+        await request_timeframe_company(update, context, "signal", timeframe)
         return
 
     ticker_input = " ".join(context.args)
@@ -599,8 +553,7 @@ async def handle_breakdown(message, chat_id, ticker, timeframe, is_callback=Fals
 
 async def handle_timeframe_breakdown_command(update: Update, context: ContextTypes.DEFAULT_TYPE, timeframe):
     if not context.args:
-        if await request_timeframe_company(update, context, "breakdown", timeframe, tracked_only=True):
-            return
+        await request_timeframe_company(update, context, "breakdown", timeframe)
         return
 
     ticker_input = " ".join(context.args)
@@ -634,10 +587,8 @@ async def handle_remove_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     if not context.args:
         set_pending_action(chat_id, f"remove_{timeframe}")
-        reply_markup = get_company_keyboard(f"remove_{timeframe}", chat_id, companies=list(state.keys()))
         await update.message.reply_text(
-            f"Send a {TIMEFRAME_CONFIG[timeframe]['label'].lower()}-tracked company name or tap one below:",
-            reply_markup=reply_markup
+            f"Send a {TIMEFRAME_CONFIG[timeframe]['label'].lower()}-tracked company name, for example: /remove_{timeframe} TCS"
         )
         return
 
@@ -674,19 +625,27 @@ async def set_breakout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_set_breakout_command(update: Update, context: ContextTypes.DEFAULT_TYPE, timeframe):
     try:
         if len(context.args) == 0:
-            await update.message.reply_text("Please provide a price. Usage: /set_breakout 2300" + FOOTER)
+            await update.message.reply_text(
+                f"Send the company name and breakout level, for example: /set_breakout_{timeframe} TCS 2300" + FOOTER
+            )
             return
             
-        if len(context.args) == 1:
-            level = float(context.args[0])
-            reply_markup = get_company_keyboard(f"set_{timeframe}", update.message.chat_id, extra_data=str(level))
-            await update.message.reply_text(f"Choose a company for {TIMEFRAME_CONFIG[timeframe]['label'].lower()} breakout level ₹{level}:", reply_markup=reply_markup)
-            return
-        
         chat_id = update.message.chat_id
-        ticker_input = " ".join(context.args[:-1])
-        ticker = find_stock_ticker(ticker_input)
-        level = float(context.args[-1])
+        level = None
+        ticker_parts = []
+        for arg in context.args:
+            try:
+                level = float(arg)
+            except ValueError:
+                ticker_parts.append(arg)
+
+        if level is None or not ticker_parts:
+            await update.message.reply_text(
+                f"Use both company name and price, for example: /set_breakout_{timeframe} TCS 2300" + FOOTER
+            )
+            return
+
+        ticker = find_stock_ticker(" ".join(ticker_parts))
         
         set_breakout_level(chat_id, timeframe, ticker, level)
         await update.message.reply_text(f"✅ {TIMEFRAME_CONFIG[timeframe]['label']} breakout level for {ticker} updated to ₹{level}" + FOOTER)
