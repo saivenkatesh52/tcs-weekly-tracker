@@ -19,30 +19,40 @@ MEMORY_STATE = {}
 def get_chat_state(chat_id):
     if chat_id not in MEMORY_STATE:
         MEMORY_STATE[chat_id] = {
-            "breakout_level": 2260,
-            "signal_date": datetime.now()
+            "TCS.NS": {
+                "breakout_level": 2260,
+                "signal_date": datetime.now()
+            }
         }
     return MEMORY_STATE[chat_id]
 
-def get_breakout_level(chat_id):
-    return get_chat_state(chat_id)["breakout_level"]
-
-def get_signal_date(chat_id):
-    return get_chat_state(chat_id)["signal_date"]
-
-def set_breakout_level(chat_id, level):
+def get_breakout_level(chat_id, ticker):
     state = get_chat_state(chat_id)
-    state["breakout_level"] = level
-    state["signal_date"] = datetime.now()
+    if ticker in state:
+        return state[ticker]["breakout_level"]
+    return None
+
+def get_signal_date(chat_id, ticker):
+    state = get_chat_state(chat_id)
+    if ticker in state:
+        return state[ticker]["signal_date"]
+    return None
+
+def set_breakout_level(chat_id, ticker, level):
+    state = get_chat_state(chat_id)
+    state[ticker] = {
+        "breakout_level": level,
+        "signal_date": datetime.now()
+    }
 
 
 # -------------------------
 # DATA FUNCTIONS
 # -------------------------
 
-def get_current_price():
-    tcs = yf.Ticker("TCS.NS")
-    hist = tcs.history(period="5d")
+def get_current_price(ticker="TCS.NS"):
+    stock = yf.Ticker(ticker)
+    hist = stock.history(period="5d")
 
     if len(hist) == 0:
         return None
@@ -50,13 +60,13 @@ def get_current_price():
     return round(hist["Close"].iloc[-1], 2)
 
 
-def get_weekly_data():
-    tcs = yf.Ticker("TCS.NS")
-    return tcs.history(period="6mo", interval="1wk")
+def get_weekly_data(ticker="TCS.NS"):
+    stock = yf.Ticker(ticker)
+    return stock.history(period="6mo", interval="1wk")
 
 
-def get_breakout_info(breakout_level, signal_date):
-    df = get_weekly_data()
+def get_breakout_info(ticker, breakout_level, signal_date):
+    df = get_weekly_data(ticker)
 
     for idx, row in df.iloc[::-1].iterrows():
         candle_date = idx.tz_localize(None) if idx.tzinfo else idx
@@ -95,7 +105,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/weekly\n"
         "/signal\n"
         "/breakdown\n"
-        "/set_breakout <price>\n"
+        "/set_breakout <ticker> <price>\n"
         "/monitor\n"
         "/stop_monitor"
         + FOOTER
@@ -104,28 +114,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
-    current_price = get_current_price()
-    breakout_level = get_breakout_level(chat_id)
+    state = get_chat_state(chat_id)
 
-    await update.message.reply_text(
-        f"📈 TCS Tracker Running\n\n"
-        f"Current Price: ₹{current_price}\n"
-        f"Breakout Level: ₹{breakout_level}"
-        + FOOTER
-    )
+    msg = "📈 Tracker Status\n\n"
+    for ticker, data in state.items():
+        current_price = get_current_price(ticker)
+        msg += f"🔸 **{ticker}**\nLive Price: ₹{current_price}\nBreakout Level: ₹{data['breakout_level']}\n\n"
+
+    await update.message.reply_text(msg.strip() + FOOTER)
 
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        tcs = yf.Ticker("TCS.NS")
-        hist = tcs.history(period="5d")
+        ticker = context.args[0].upper() if context.args else "TCS.NS"
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="5d")
 
         current_price = round(hist["Close"].iloc[-1], 2)
         day_high = round(hist["High"].iloc[-1], 2)
         day_low = round(hist["Low"].iloc[-1], 2)
 
         await update.message.reply_text(
-            f"📊 TCS Price\n\n"
+            f"📊 {ticker} Price\n\n"
             f"Current Price: ₹{current_price}\n"
             f"Day High: ₹{day_high}\n"
             f"Day Low: ₹{day_low}"
@@ -134,15 +144,16 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         await update.message.reply_text(
-            f"Error: {str(e)}"
+            f"Error fetching data for {ticker}: {str(e)}"
         )
 
 
 async def weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        df = get_weekly_data().tail(8)
+        ticker = context.args[0].upper() if context.args else "TCS.NS"
+        df = get_weekly_data(ticker).tail(8)
 
-        message = "📅 Last 8 Weekly Closes\n\n"
+        message = f"📅 {ticker} Last 8 Weekly Closes\n\n"
 
         for idx, row in df.iterrows():
             message += (
@@ -162,16 +173,22 @@ async def weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        ticker = context.args[0].upper() if context.args else "TCS.NS"
         chat_id = update.message.chat_id
-        breakout_level = get_breakout_level(chat_id)
-        signal_date = get_signal_date(chat_id)
-        info = get_breakout_info(breakout_level, signal_date)
-        current_price = get_current_price()
+        breakout_level = get_breakout_level(chat_id, ticker)
+        
+        if breakout_level is None:
+            await update.message.reply_text(f"No breakout level set for {ticker}. Use /set_breakout {ticker} <price>" + FOOTER)
+            return
+            
+        signal_date = get_signal_date(chat_id, ticker)
+        info = get_breakout_info(ticker, breakout_level, signal_date)
+        current_price = get_current_price(ticker)
         
         signal_date_str = signal_date.strftime('%d-%b-%Y %I:%M %p')
 
         msg = (
-            f"🚦 TCS SIGNAL\n\n"
+            f"🚦 {ticker} SIGNAL\n\n"
             f"Signal Date: {signal_date_str}\n"
             f"Live Price: ₹{current_price}\n"
             f"Buy Price: Weekly close above ₹{breakout_level}\n\n"
@@ -203,13 +220,19 @@ async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        ticker = context.args[0].upper() if context.args else "TCS.NS"
         chat_id = update.message.chat_id
+        breakout_level = get_breakout_level(chat_id, ticker)
+        
+        if breakout_level is None:
+            await update.message.reply_text(f"No breakout level set for {ticker}." + FOOTER)
+            return
+            
         # Get data for the last 2 months (~8 weeks)
-        df = get_weekly_data().tail(8)
-        breakout_level = get_breakout_level(chat_id)
+        df = get_weekly_data(ticker).tail(8)
 
         message = (
-            f"⚠ Last 2 Months - Weekly Closes Below ₹{breakout_level}\n\n"
+            f"⚠ {ticker} Last 2 Months - Weekly Closes Below ₹{breakout_level}\n\n"
         )
 
         found = False
@@ -241,14 +264,15 @@ async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def set_breakout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if not context.args:
-            await update.message.reply_text("Please provide a price. Usage: /set_breakout 2300" + FOOTER)
+        if len(context.args) < 2:
+            await update.message.reply_text("Please provide a company and price. Usage: /set_breakout TCS.NS 2300" + FOOTER)
             return
         
         chat_id = update.message.chat_id
-        level = float(context.args[0])
-        set_breakout_level(chat_id, level)
-        await update.message.reply_text(f"✅ Breakout level updated to ₹{level}" + FOOTER)
+        ticker = context.args[0].upper()
+        level = float(context.args[1])
+        set_breakout_level(chat_id, ticker, level)
+        await update.message.reply_text(f"✅ Breakout level for {ticker} updated to ₹{level}" + FOOTER)
         
     except ValueError:
         await update.message.reply_text("❌ Invalid number format." + FOOTER)
@@ -257,14 +281,17 @@ async def set_breakout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def check_breakout_job(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     chat_id = job.chat_id
-    breakout_level = get_breakout_level(chat_id)
+    state = get_chat_state(chat_id)
     
-    current_price = get_current_price()
-    if current_price and current_price > breakout_level:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"🚨 BREAKOUT ALERT 🚨\n\nTCS is currently trading above ₹{breakout_level}!\nCurrent Price: ₹{current_price}" + FOOTER
-        )
+    for ticker, data in state.items():
+        breakout_level = data["breakout_level"]
+        current_price = get_current_price(ticker)
+        
+        if current_price and current_price > breakout_level:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"🚨 BREAKOUT ALERT 🚨\n\n{ticker} is currently trading above ₹{breakout_level}!\nCurrent Price: ₹{current_price}" + FOOTER
+            )
 
 
 async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
