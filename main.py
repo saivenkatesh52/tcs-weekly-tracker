@@ -52,7 +52,7 @@ def get_weekly_data():
 def get_breakout_info():
     df = get_weekly_data()
 
-    for idx, row in df.iterrows():
+    for idx, row in df.iloc[::-1].iterrows():
         close_price = round(row["Close"], 2)
 
         if close_price > BREAKOUT_LEVEL:
