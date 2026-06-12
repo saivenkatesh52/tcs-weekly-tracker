@@ -1,5 +1,5 @@
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 import os
 import yfinance as yf
 import pandas as pd
@@ -8,6 +8,43 @@ from datetime import datetime
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 FOOTER = "\n\n━━━━━━━━━━━━\nCreated by Sai Venkatesh"
+
+POPULAR_STOCKS = {
+    "TCS": "TCS.NS",
+    "Reliance": "RELIANCE.NS",
+    "Infosys": "INFY.NS",
+    "HDFC Bank": "HDFCBANK.NS",
+    "ICICI Bank": "ICICIBANK.NS",
+    "SBI": "SBIN.NS",
+    "ITC": "ITC.NS",
+    "L&T": "LT.NS"
+}
+
+def get_company_keyboard(command, chat_id, extra_data=""):
+    state = get_chat_state(chat_id)
+    keyboard = []
+    row = []
+    
+    tickers = list(state.keys())
+    for name, t in POPULAR_STOCKS.items():
+        if t not in tickers:
+            tickers.append(t)
+            
+    for ticker in tickers:
+        display_name = ticker.replace(".NS", "")
+        callback_data = f"{command}:{ticker}"
+        if extra_data:
+            callback_data += f":{extra_data}"
+            
+        row.append(InlineKeyboardButton(display_name, callback_data=callback_data))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+            
+    if row:
+        keyboard.append(row)
+        
+    return InlineKeyboardMarkup(keyboard)
 
 
 # -------------------------
@@ -105,7 +142,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/weekly\n"
         "/signal\n"
         "/breakdown\n"
-        "/set_breakout <ticker> <price>\n"
+        "/set_breakout <price>\n"
         "/monitor\n"
         "/stop_monitor"
         + FOOTER
@@ -124,9 +161,8 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg.strip() + FOOTER)
 
 
-async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_price(message, ticker):
     try:
-        ticker = context.args[0].upper() if context.args else "TCS.NS"
         stock = yf.Ticker(ticker)
         hist = stock.history(period="5d")
 
@@ -134,7 +170,7 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         day_high = round(hist["High"].iloc[-1], 2)
         day_low = round(hist["Low"].iloc[-1], 2)
 
-        await update.message.reply_text(
+        await message.reply_text(
             f"📊 {ticker} Price\n\n"
             f"Current Price: ₹{current_price}\n"
             f"Day High: ₹{day_high}\n"
@@ -143,42 +179,52 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     except Exception as e:
-        await update.message.reply_text(
-            f"Error fetching data for {ticker}: {str(e)}"
-        )
+        await message.reply_text(f"Error fetching data for {ticker}: {str(e)}")
+
+
+async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        reply_markup = get_company_keyboard("price", update.message.chat_id)
+        await update.message.reply_text("Choose a company:", reply_markup=reply_markup)
+        return
+        
+    ticker = context.args[0].upper()
+    if not ticker.endswith(".NS"): ticker += ".NS"
+    await handle_price(update.message, ticker)
+
+
+async def handle_weekly(message, ticker):
+    try:
+        df = get_weekly_data(ticker).tail(8)
+
+        msg = f"📅 {ticker} Last 8 Weekly Closes\n\n"
+
+        for idx, row in df.iterrows():
+            msg += f"{idx.strftime('%d-%b-%Y')} : ₹{round(row['Close'], 2)}\n"
+
+        await message.reply_text(msg + FOOTER)
+
+    except Exception as e:
+        await message.reply_text(f"Error: {str(e)}")
 
 
 async def weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        reply_markup = get_company_keyboard("weekly", update.message.chat_id)
+        await update.message.reply_text("Choose a company:", reply_markup=reply_markup)
+        return
+        
+    ticker = context.args[0].upper()
+    if not ticker.endswith(".NS"): ticker += ".NS"
+    await handle_weekly(update.message, ticker)
+
+
+async def handle_signal(message, chat_id, ticker):
     try:
-        ticker = context.args[0].upper() if context.args else "TCS.NS"
-        df = get_weekly_data(ticker).tail(8)
-
-        message = f"📅 {ticker} Last 8 Weekly Closes\n\n"
-
-        for idx, row in df.iterrows():
-            message += (
-                f"{idx.strftime('%d-%b-%Y')} : "
-                f"₹{round(row['Close'], 2)}\n"
-            )
-
-        await update.message.reply_text(
-            message + FOOTER
-        )
-
-    except Exception as e:
-        await update.message.reply_text(
-            f"Error: {str(e)}"
-        )
-
-
-async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        ticker = context.args[0].upper() if context.args else "TCS.NS"
-        chat_id = update.message.chat_id
         breakout_level = get_breakout_level(chat_id, ticker)
         
         if breakout_level is None:
-            await update.message.reply_text(f"No breakout level set for {ticker}. Use /set_breakout {ticker} <price>" + FOOTER)
+            await message.reply_text(f"No breakout level set for {ticker}. Use /set_breakout <price> to set one." + FOOTER)
             return
             
         signal_date = get_signal_date(chat_id, ticker)
@@ -208,69 +254,78 @@ async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Difference: {diff_percent}% (from ₹{breakout_level})"
             )
 
-        await update.message.reply_text(
-            msg + FOOTER
-        )
+        await message.reply_text(msg + FOOTER)
 
     except Exception as e:
-        await update.message.reply_text(
-            f"Error: {str(e)}"
-        )
+        await message.reply_text(f"Error: {str(e)}")
 
 
-async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        reply_markup = get_company_keyboard("signal", update.message.chat_id)
+        await update.message.reply_text("Choose a company:", reply_markup=reply_markup)
+        return
+        
+    ticker = context.args[0].upper()
+    if not ticker.endswith(".NS"): ticker += ".NS"
+    await handle_signal(update.message, update.message.chat_id, ticker)
+
+
+async def handle_breakdown(message, chat_id, ticker):
     try:
-        ticker = context.args[0].upper() if context.args else "TCS.NS"
-        chat_id = update.message.chat_id
         breakout_level = get_breakout_level(chat_id, ticker)
         
         if breakout_level is None:
-            await update.message.reply_text(f"No breakout level set for {ticker}." + FOOTER)
+            await message.reply_text(f"No breakout level set for {ticker}." + FOOTER)
             return
             
-        # Get data for the last 2 months (~8 weeks)
         df = get_weekly_data(ticker).tail(8)
-
-        message = (
-            f"⚠ {ticker} Last 2 Months - Weekly Closes Below ₹{breakout_level}\n\n"
-        )
+        msg = f"⚠ {ticker} Last 2 Months - Weekly Closes Below ₹{breakout_level}\n\n"
 
         found = False
-
         for idx, row in df.iterrows():
-
             close_price = round(row["Close"], 2)
-
             if close_price < breakout_level:
                 found = True
-
-                message += (
-                    f"{idx.strftime('%d-%b-%Y')} : "
-                    f"₹{close_price}\n"
-                )
+                msg += f"{idx.strftime('%d-%b-%Y')} : ₹{close_price}\n"
 
         if not found:
-            message += "No breakdown candles found in the last 2 months."
+            msg += "No breakdown candles found in the last 2 months."
 
-        await update.message.reply_text(
-            message + FOOTER
-        )
+        await message.reply_text(msg + FOOTER)
 
     except Exception as e:
-        await update.message.reply_text(
-            f"Error: {str(e)}"
-        )
+        await message.reply_text(f"Error: {str(e)}")
+
+
+async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        reply_markup = get_company_keyboard("breakdown", update.message.chat_id)
+        await update.message.reply_text("Choose a company:", reply_markup=reply_markup)
+        return
+        
+    ticker = context.args[0].upper()
+    if not ticker.endswith(".NS"): ticker += ".NS"
+    await handle_breakdown(update.message, update.message.chat_id, ticker)
 
 
 async def set_breakout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if len(context.args) < 2:
-            await update.message.reply_text("Please provide a company and price. Usage: /set_breakout TCS.NS 2300" + FOOTER)
+        if len(context.args) == 0:
+            await update.message.reply_text("Please provide a price. Usage: /set_breakout 2300" + FOOTER)
+            return
+            
+        if len(context.args) == 1:
+            level = float(context.args[0])
+            reply_markup = get_company_keyboard("set", update.message.chat_id, extra_data=str(level))
+            await update.message.reply_text(f"Choose a company for breakout level ₹{level}:", reply_markup=reply_markup)
             return
         
         chat_id = update.message.chat_id
         ticker = context.args[0].upper()
+        if not ticker.endswith(".NS"): ticker += ".NS"
         level = float(context.args[1])
+        
         set_breakout_level(chat_id, ticker, level)
         await update.message.reply_text(f"✅ Breakout level for {ticker} updated to ₹{level}" + FOOTER)
         
@@ -317,6 +372,30 @@ async def stop_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏹️ Background monitoring stopped." + FOOTER)
 
 
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data.split(":")
+    command = data[0]
+    ticker = data[1]
+    
+    chat_id = query.message.chat_id
+    
+    if command == "price":
+        await handle_price(query.message, ticker)
+    elif command == "weekly":
+        await handle_weekly(query.message, ticker)
+    elif command == "signal":
+        await handle_signal(query.message, chat_id, ticker)
+    elif command == "breakdown":
+        await handle_breakdown(query.message, chat_id, ticker)
+    elif command == "set":
+        level = float(data[2])
+        set_breakout_level(chat_id, ticker, level)
+        await query.message.edit_text(f"✅ Breakout level for {ticker} updated to ₹{level}" + FOOTER)
+
+
 # -------------------------
 # MAIN
 # -------------------------
@@ -325,6 +404,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("price", price))
     app.add_handler(CommandHandler("weekly", weekly))
