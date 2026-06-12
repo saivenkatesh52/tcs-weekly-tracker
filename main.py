@@ -1,43 +1,26 @@
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import os
-import json
 import yfinance as yf
 from datetime import datetime
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-STATE_FILE = "tracker_state.json"
-
 FOOTER = "\n\n━━━━━━━━━━━━\nCreated by Sai Venkatesh"
 
 
 # -------------------------
-# STATE MANAGEMENT
+# STATE MANAGEMENT (IN-MEMORY)
 # -------------------------
 
-def load_state():
-    try:
-        with open(STATE_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {"alert_sent": False}
+MEMORY_STATE = {}
+
+def get_breakout_level(chat_id):
+    return MEMORY_STATE.get(chat_id, 2260)
 
 
-def save_state(state):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f)
-
-
-def get_breakout_level():
-    state = load_state()
-    return state.get("breakout_level", 2260)
-
-
-def set_breakout_level(level):
-    state = load_state()
-    state["breakout_level"] = level
-    save_state(state)
+def set_breakout_level(chat_id, level):
+    MEMORY_STATE[chat_id] = level
 
 
 # -------------------------
@@ -59,9 +42,8 @@ def get_weekly_data():
     return tcs.history(period="6mo", interval="1wk")
 
 
-def get_breakout_info():
+def get_breakout_info(breakout_level):
     df = get_weekly_data()
-    breakout_level = get_breakout_level()
 
     for idx, row in df.iloc[::-1].iterrows():
         close_price = round(row["Close"], 2)
@@ -93,14 +75,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/weekly\n"
         "/signal\n"
         "/breakdown\n"
-        "/set_breakout <price>"
+        "/set_breakout <price>\n"
+        "/monitor\n"
+        "/stop_monitor"
         + FOOTER
     )
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
     current_price = get_current_price()
-    breakout_level = get_breakout_level()
+    breakout_level = get_breakout_level(chat_id)
 
     await update.message.reply_text(
         f"📈 TCS Tracker Running\n\n"
@@ -157,10 +142,11 @@ async def weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        info = get_breakout_info()
+        chat_id = update.message.chat_id
+        breakout_level = get_breakout_level(chat_id)
+        info = get_breakout_info(breakout_level)
         current_price = get_current_price()
         current_date_str = datetime.now().strftime('%d-%b-%Y %I:%M %p')
-        breakout_level = get_breakout_level()
 
         msg = (
             f"🚦 TCS SIGNAL\n\n"
@@ -195,9 +181,10 @@ async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        chat_id = update.message.chat_id
         # Get data for the last 2 months (~8 weeks)
         df = get_weekly_data().tail(8)
-        breakout_level = get_breakout_level()
+        breakout_level = get_breakout_level(chat_id)
 
         message = (
             f"⚠ Last 2 Months - Weekly Closes Below ₹{breakout_level}\n\n"
@@ -236,12 +223,49 @@ async def set_breakout(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Please provide a price. Usage: /set_breakout 2300" + FOOTER)
             return
         
+        chat_id = update.message.chat_id
         level = float(context.args[0])
-        set_breakout_level(level)
+        set_breakout_level(chat_id, level)
         await update.message.reply_text(f"✅ Breakout level updated to ₹{level}" + FOOTER)
         
     except ValueError:
         await update.message.reply_text("❌ Invalid number format." + FOOTER)
+
+
+async def check_breakout_job(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    chat_id = job.chat_id
+    breakout_level = get_breakout_level(chat_id)
+    
+    current_price = get_current_price()
+    if current_price and current_price > breakout_level:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"🚨 BREAKOUT ALERT 🚨\n\nTCS is currently trading above ₹{breakout_level}!\nCurrent Price: ₹{current_price}" + FOOTER
+        )
+
+
+async def monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    
+    # Remove existing jobs
+    current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
+    for job in current_jobs:
+        job.schedule_removal()
+        
+    # Run every 6 hours (21600 seconds)
+    context.job_queue.run_repeating(check_breakout_job, interval=21600, first=10, chat_id=chat_id, name=str(chat_id))
+    
+    await update.message.reply_text("✅ Background monitoring started! I will check every 6 hours and notify you if a breakout occurs." + FOOTER)
+
+
+async def stop_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
+    for job in current_jobs:
+        job.schedule_removal()
+    
+    await update.message.reply_text("⏹️ Background monitoring stopped." + FOOTER)
 
 
 # -------------------------
@@ -258,6 +282,8 @@ def main():
     app.add_handler(CommandHandler("signal", signal))
     app.add_handler(CommandHandler("breakdown", breakdown))
     app.add_handler(CommandHandler("set_breakout", set_breakout))
+    app.add_handler(CommandHandler("monitor", monitor))
+    app.add_handler(CommandHandler("stop_monitor", stop_monitor))
 
     app.run_polling()
 
