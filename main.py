@@ -1,5 +1,5 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 import os
 import yfinance as yf
 import pandas as pd
@@ -63,6 +63,7 @@ def get_company_keyboard(command, chat_id, extra_data=""):
 # -------------------------
 
 MEMORY_STATE = {}
+PENDING_ACTIONS = {}
 
 def get_chat_state(chat_id):
     if chat_id not in MEMORY_STATE:
@@ -87,6 +88,18 @@ def set_breakout_level(chat_id, ticker, level):
         "breakout_level": level,
         "signal_date": datetime.now()
     }
+
+
+def set_pending_action(chat_id, action):
+    PENDING_ACTIONS[chat_id] = action
+
+
+def get_pending_action(chat_id):
+    return PENDING_ACTIONS.get(chat_id)
+
+
+def clear_pending_action(chat_id):
+    PENDING_ACTIONS.pop(chat_id, None)
 
 
 # -------------------------
@@ -213,8 +226,13 @@ async def handle_price(message, ticker, is_callback=False):
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        reply_markup = get_company_keyboard("price", update.message.chat_id)
-        await update.message.reply_text("Choose a company:", reply_markup=reply_markup)
+        chat_id = update.message.chat_id
+        set_pending_action(chat_id, "price")
+        reply_markup = get_company_keyboard("price", chat_id)
+        await update.message.reply_text(
+            "Send a company name or tap one below:",
+            reply_markup=reply_markup
+        )
         return
         
     ticker_input = " ".join(context.args)
@@ -245,8 +263,13 @@ async def handle_weekly(message, ticker, is_callback=False):
 
 async def weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        reply_markup = get_company_keyboard("weekly", update.message.chat_id)
-        await update.message.reply_text("Choose a company:", reply_markup=reply_markup)
+        chat_id = update.message.chat_id
+        set_pending_action(chat_id, "weekly")
+        reply_markup = get_company_keyboard("weekly", chat_id)
+        await update.message.reply_text(
+            "Send a company name or tap one below:",
+            reply_markup=reply_markup
+        )
         return
         
     ticker_input = " ".join(context.args)
@@ -307,8 +330,13 @@ async def handle_signal(message, chat_id, ticker, is_callback=False):
 
 async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        reply_markup = get_company_keyboard("signal", update.message.chat_id)
-        await update.message.reply_text("Choose a company:", reply_markup=reply_markup)
+        chat_id = update.message.chat_id
+        set_pending_action(chat_id, "signal")
+        reply_markup = get_company_keyboard("signal", chat_id)
+        await update.message.reply_text(
+            "Send a company name or tap one below:",
+            reply_markup=reply_markup
+        )
         return
         
     ticker_input = " ".join(context.args)
@@ -355,8 +383,13 @@ async def handle_breakdown(message, chat_id, ticker, is_callback=False):
 
 async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        reply_markup = get_company_keyboard("breakdown", update.message.chat_id)
-        await update.message.reply_text("Choose a company:", reply_markup=reply_markup)
+        chat_id = update.message.chat_id
+        set_pending_action(chat_id, "breakdown")
+        reply_markup = get_company_keyboard("breakdown", chat_id)
+        await update.message.reply_text(
+            "Send a company name or tap one below:",
+            reply_markup=reply_markup
+        )
         return
         
     ticker_input = " ".join(context.args)
@@ -373,8 +406,12 @@ async def remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     if not context.args:
+        set_pending_action(chat_id, "remove")
         reply_markup = get_company_keyboard("remove", chat_id)
-        await update.message.reply_text("Choose a company to stop tracking:", reply_markup=reply_markup)
+        await update.message.reply_text(
+            "Send a company name or tap one below:",
+            reply_markup=reply_markup
+        )
         return
         
     ticker_input = " ".join(context.args)
@@ -460,6 +497,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ticker = data[1]
     
     chat_id = query.message.chat_id
+    clear_pending_action(chat_id)
     
     if command == "price":
         await handle_price(query.message, ticker, is_callback=True)
@@ -480,6 +518,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_text(f"🗑️ Stopped tracking {ticker}." + FOOTER)
         else:
             await query.message.edit_text(f"You are not tracking {ticker}." + FOOTER)
+
+
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    if message is None or not message.text:
+        return
+
+    chat_id = message.chat_id
+    action = get_pending_action(chat_id)
+    if not action:
+        return
+
+    ticker = find_stock_ticker(message.text)
+    clear_pending_action(chat_id)
+
+    if action == "price":
+        await handle_price(message, ticker)
+    elif action == "weekly":
+        await handle_weekly(message, ticker)
+    elif action == "signal":
+        await handle_signal(message, chat_id, ticker)
+    elif action == "breakdown":
+        await handle_breakdown(message, chat_id, ticker)
+    elif action == "remove":
+        state = get_chat_state(chat_id)
+        if ticker in state:
+            del state[ticker]
+            await message.reply_text(f"🗑️ Stopped tracking {ticker}." + FOOTER)
+        else:
+            await message.reply_text(f"You are not tracking {ticker}." + FOOTER)
 
 
 async def post_init(application: Application):
@@ -514,6 +582,7 @@ def main():
     app.add_handler(CommandHandler("remove", remove))
     app.add_handler(CommandHandler("monitor", monitor))
     app.add_handler(CommandHandler("stop_monitor", stop_monitor))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     app.run_polling()
 
