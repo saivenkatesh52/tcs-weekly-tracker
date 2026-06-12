@@ -3,6 +3,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 import os
 import json
 import yfinance as yf
+from datetime import datetime
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
@@ -145,31 +146,27 @@ async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         info = get_breakout_info()
         current_price = get_current_price()
+        current_date_str = datetime.now().strftime('%d-%b-%Y %I:%M %p')
+
+        msg = (
+            f"🚦 TCS SIGNAL\n\n"
+            f"Signal Date: {current_date_str}\n"
+            f"Live Price: ₹{current_price}\n"
+            f"Buy Price: Weekly close above ₹{BREAKOUT_LEVEL}\n\n"
+        )
 
         if info["buy_price"] is None:
-
-            msg = (
-                "🚦 TCS SIGNAL\n\n"
-                "Status: ⏳ Monitoring\n\n"
-                f"Breakout Level: ₹{BREAKOUT_LEVEL}\n"
-                f"Current Price: ₹{current_price}"
-            )
-
+            msg += "Is Buy Price triggered? : No"
         else:
-
-            gain = round(
-                ((current_price - info["buy_price"])
-                 / info["buy_price"]) * 100,
+            diff_percent = round(
+                ((current_price - BREAKOUT_LEVEL) / BREAKOUT_LEVEL) * 100,
                 2
             )
-
-            msg = (
-                "🚦 TCS SIGNAL\n\n"
-                "Status: ✅ Breakout Done\n\n"
-                f"Buy Price: ₹{info['buy_price']}\n"
-                f"Breakout Week: {info['week']}\n"
-                f"Current Price: ₹{current_price}\n"
-                f"Return: {gain}%"
+            msg += (
+                "Is Buy Price triggered? : Yes\n"
+                f"Breakout done and closed above ₹{BREAKOUT_LEVEL}\n"
+                f"Triggered Week: {info['week']}\n"
+                f"Difference: {diff_percent}% (from ₹{BREAKOUT_LEVEL})"
             )
 
         await update.message.reply_text(
@@ -184,10 +181,11 @@ async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        df = get_weekly_data()
+        # Get data for the last 2 months (~8 weeks)
+        df = get_weekly_data().tail(8)
 
         message = (
-            f"⚠ Weekly Closes Below ₹{BREAKOUT_LEVEL}\n\n"
+            f"⚠ Last 2 Months - Weekly Closes Below ₹{BREAKOUT_LEVEL}\n\n"
         )
 
         found = False
@@ -205,7 +203,7 @@ async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
         if not found:
-            message += "No breakdown candles found."
+            message += "No breakdown candles found in the last 2 months."
 
         await update.message.reply_text(
             message + FOOTER
