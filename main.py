@@ -1,26 +1,67 @@
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import os
+import yfinance as yf
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
+FOOTER = "\n\n━━━━━━━━━━━━\nCreated by Sai Venkatesh"
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "✅ TCS Tracker Active\n\nCreated by Sai Venkatesh"
-    )
+await update.message.reply_text(
+"📈 TCS Weekly Tracker Active\n\n"
+"Commands:\n"
+"/start\n"
+"/status\n"
+"/price"
++ FOOTER
+)
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+await update.message.reply_text(
+"📈 TCS Weekly Tracker\n\n"
+"Stock: NSE:TCS\n"
+"Breakout Level: ₹2260\n"
+"Status: Monitoring"
++ FOOTER
+)
+
+async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+try:
+tcs = yf.Ticker("TCS.NS")
+
+    info = tcs.info
+
+    current_price = info.get("currentPrice", "N/A")
+    day_high = info.get("dayHigh", "N/A")
+    day_low = info.get("dayLow", "N/A")
+    high_52 = info.get("fiftyTwoWeekHigh", "N/A")
+    low_52 = info.get("fiftyTwoWeekLow", "N/A")
+
     await update.message.reply_text(
-        "📈 TCS Tracker Running\nBreakout Level: ₹2260\n\nCreated by Sai Venkatesh"
+        f"📊 NSE:TCS\n\n"
+        f"Current Price: ₹{current_price}\n"
+        f"Day High: ₹{day_high}\n"
+        f"Day Low: ₹{day_low}\n\n"
+        f"52W High: ₹{high_52}\n"
+        f"52W Low: ₹{low_52}"
+        + FOOTER
+    )
+
+except Exception as e:
+    await update.message.reply_text(
+        f"Error fetching data:\n{str(e)}"
+        + FOOTER
     )
 
 def main():
-    application = Application.builder().token(BOT_TOKEN).build()
+app = Application.builder().token(BOT_TOKEN).build()
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("status", status))
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("status", status))
+app.add_handler(CommandHandler("price", price))
 
-    application.run_polling()
+app.run_polling()
 
-if __name__ == "__main__":
-    main()
+if name == "main":
+main()
