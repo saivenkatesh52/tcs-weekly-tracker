@@ -1,10 +1,10 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 import os
 import yfinance as yf
 import pandas as pd
-import json
 import difflib
+import json
 from datetime import datetime, time as dt_time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -42,28 +42,41 @@ if os.path.exists("stocks.json"):
     with open("stocks.json", "r") as f:
         STOCKS_DB = json.load(f)
 
+
+def ticker_has_data(symbol):
+    try:
+        hist = yf.Ticker(symbol).history(period="5d")
+        return not hist.empty
+    except Exception:
+        return False
+
 def find_stock_ticker(user_input):
-    user_input_upper = user_input.upper()
-    
-    if user_input_upper in STOCKS_DB.values():
-        return user_input_upper
-    if user_input_upper in STOCKS_DB:
-        return STOCKS_DB[user_input_upper]
-        
+    raw_input = user_input.strip()
+    if not raw_input:
+        return raw_input
+
+    normalized = raw_input.upper()
+
+    if normalized in STOCKS_DB.values():
+        return normalized
+    if raw_input in STOCKS_DB:
+        return STOCKS_DB[raw_input]
+    if normalized in STOCKS_DB:
+        return STOCKS_DB[normalized]
+
+    if ticker_has_data(raw_input):
+        return raw_input
+    if normalized != raw_input and ticker_has_data(normalized):
+        return normalized
+
     company_names = list(STOCKS_DB.keys())
-    matches = difflib.get_close_matches(user_input_upper, company_names, n=1, cutoff=0.5)
-    
+    matches = difflib.get_close_matches(normalized, company_names, n=1, cutoff=0.5)
     if matches:
         return STOCKS_DB[matches[0]]
-        
-    if not user_input_upper.endswith(".NS"):
-        user_input_upper += ".NS"
-    return user_input_upper
+
+    return normalized
 
 FOOTER = "\n\n━━━━━━━━━━━━\nCreated by Sai Venkatesh"
-
-def get_all_company_tickers():
-    return sorted(set(STOCKS_DB.values()))
 
 
 # -------------------------
@@ -258,7 +271,7 @@ def get_target_timeframe_from_command(command):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Welcome to the **Stock Tracker**!\n\n"
-        "I can help you monitor breakout levels for any NSE stock and alert you automatically. Here are the commands you can use:\n\n"
+        "I can help you monitor breakout levels for any Yahoo Finance ticker and alert you automatically. Here are the commands you can use:\n\n"
         "🛠 **Setup & Manage**\n"
         "🔹 /set_breakout - Set a new breakout level (weekly default)\n"
         "🔹 /set_breakout_daily - Set a daily breakout level\n"
@@ -283,7 +296,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 /stop_monitor_weekly - Stop weekly alerts\n"
         "🔹 /stop_monitor_daily - Stop daily alerts\n"
         "🔹 /stop_monitor_monthly - Stop monthly alerts\n\n"
-        "💡 *Tip:* Type the company name directly after the command, like `/signal TCS` or `/set_breakout_daily Reliance 2500`."
+        "💡 *Tip:* Type the ticker symbol directly after the command, like `/signal AAPL` or `/set_breakout_daily RELIANCE.NS 2500`."
         + FOOTER,
         parse_mode="Markdown"
     )
@@ -305,7 +318,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"**{TIMEFRAME_CONFIG[timeframe]['label']}**\n"
         for ticker, data in trackers.items():
             current_price = get_current_price(ticker)
-            msg += f"🔸 *{ticker.replace('.NS', '')}*\n"
+            msg += f"🔸 *{ticker}*\n"
             msg += f"  • Live Price: ₹{current_price}\n"
             msg += f"  • Breakout Level: ₹{data['breakout_level']}\n"
         msg += "\n"
@@ -349,7 +362,7 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         chat_id = update.message.chat_id
         set_pending_action(chat_id, "price")
-        await update.message.reply_text("Send a company name, for example: /price TCS")
+        await update.message.reply_text("Send a ticker symbol, for example: /price AAPL")
         return
         
     ticker_input = " ".join(context.args)
@@ -394,7 +407,7 @@ async def weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         chat_id = update.message.chat_id
         set_pending_action(chat_id, "weekly")
-        await update.message.reply_text("Send a company name, for example: /weekly TCS")
+        await update.message.reply_text("Send a ticker symbol, for example: /weekly AAPL")
         return
         
     ticker_input = " ".join(context.args)
@@ -406,7 +419,7 @@ async def daily(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         chat_id = update.message.chat_id
         set_pending_action(chat_id, "daily")
-        await update.message.reply_text("Send a company name, for example: /daily TCS")
+        await update.message.reply_text("Send a ticker symbol, for example: /daily AAPL")
         return
 
     ticker_input = " ".join(context.args)
@@ -418,7 +431,7 @@ async def monthly(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         chat_id = update.message.chat_id
         set_pending_action(chat_id, "monthly")
-        await update.message.reply_text("Send a company name, for example: /monthly TCS")
+        await update.message.reply_text("Send a ticker symbol, for example: /monthly AAPL")
         return
 
     ticker_input = " ".join(context.args)
@@ -482,7 +495,7 @@ async def request_timeframe_company(update, context, action, timeframe):
     chat_id = update.message.chat_id
     set_pending_action(chat_id, f"{action}_{timeframe}")
     await update.message.reply_text(
-        f"Send a company name, for example: /{action}_{timeframe} TCS"
+        f"Send a ticker symbol, for example: /{action}_{timeframe} AAPL"
     )
     return True
 
@@ -588,7 +601,7 @@ async def handle_remove_command(update: Update, context: ContextTypes.DEFAULT_TY
     if not context.args:
         set_pending_action(chat_id, f"remove_{timeframe}")
         await update.message.reply_text(
-            f"Send a {TIMEFRAME_CONFIG[timeframe]['label'].lower()}-tracked company name, for example: /remove_{timeframe} TCS"
+            f"Send a {TIMEFRAME_CONFIG[timeframe]['label'].lower()}-tracked ticker symbol, for example: /remove_{timeframe} AAPL"
         )
         return
 
@@ -626,7 +639,7 @@ async def handle_set_breakout_command(update: Update, context: ContextTypes.DEFA
     try:
         if len(context.args) == 0:
             await update.message.reply_text(
-                f"Send the company name and breakout level, for example: /set_breakout_{timeframe} TCS 2300" + FOOTER
+                f"Send the ticker symbol and breakout level, for example: /set_breakout_{timeframe} AAPL 2300" + FOOTER
             )
             return
             
@@ -641,7 +654,7 @@ async def handle_set_breakout_command(update: Update, context: ContextTypes.DEFA
 
         if level is None or not ticker_parts:
             await update.message.reply_text(
-                f"Use both company name and price, for example: /set_breakout_{timeframe} TCS 2300" + FOOTER
+                f"Use both ticker symbol and price, for example: /set_breakout_{timeframe} AAPL 2300" + FOOTER
             )
             return
 
