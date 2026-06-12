@@ -9,26 +9,12 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 FOOTER = "\n\n━━━━━━━━━━━━\nCreated by Sai Venkatesh"
 
-POPULAR_STOCKS = {
-    "TCS": "TCS.NS",
-    "Reliance": "RELIANCE.NS",
-    "Infosys": "INFY.NS",
-    "HDFC Bank": "HDFCBANK.NS",
-    "ICICI Bank": "ICICIBANK.NS",
-    "SBI": "SBIN.NS",
-    "ITC": "ITC.NS",
-    "L&T": "LT.NS"
-}
-
 def get_company_keyboard(command, chat_id, extra_data=""):
     state = get_chat_state(chat_id)
     keyboard = []
     row = []
     
     tickers = list(state.keys())
-    for name, t in POPULAR_STOCKS.items():
-        if t not in tickers:
-            tickers.append(t)
             
     for ticker in tickers:
         display_name = ticker.replace(".NS", "")
