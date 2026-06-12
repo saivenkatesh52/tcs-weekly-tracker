@@ -2,6 +2,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import os
 import yfinance as yf
+import pandas as pd
 from datetime import datetime
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -15,12 +16,24 @@ FOOTER = "\n\n━━━━━━━━━━━━\nCreated by Sai Venkatesh"
 
 MEMORY_STATE = {}
 
-def get_breakout_level(chat_id):
-    return MEMORY_STATE.get(chat_id, 2260)
+def get_chat_state(chat_id):
+    if chat_id not in MEMORY_STATE:
+        MEMORY_STATE[chat_id] = {
+            "breakout_level": 2260,
+            "signal_date": datetime.now()
+        }
+    return MEMORY_STATE[chat_id]
 
+def get_breakout_level(chat_id):
+    return get_chat_state(chat_id)["breakout_level"]
+
+def get_signal_date(chat_id):
+    return get_chat_state(chat_id)["signal_date"]
 
 def set_breakout_level(chat_id, level):
-    MEMORY_STATE[chat_id] = level
+    state = get_chat_state(chat_id)
+    state["breakout_level"] = level
+    state["signal_date"] = datetime.now()
 
 
 # -------------------------
@@ -42,18 +55,25 @@ def get_weekly_data():
     return tcs.history(period="6mo", interval="1wk")
 
 
-def get_breakout_info(breakout_level):
+def get_breakout_info(breakout_level, signal_date):
     df = get_weekly_data()
 
     for idx, row in df.iloc[::-1].iterrows():
-        close_price = round(row["Close"], 2)
+        candle_date = idx.tz_localize(None) if idx.tzinfo else idx
+        
+        # Check if the candle ends AFTER the signal date
+        if candle_date + pd.Timedelta(days=7) >= signal_date:
+            close_price = round(row["Close"], 2)
 
-        if close_price > breakout_level:
-            return {
-                "status": "✅ Breakout Done",
-                "buy_price": close_price,
-                "week": idx.strftime("%d-%b-%Y")
-            }
+            if close_price > breakout_level:
+                return {
+                    "status": "✅ Breakout Done",
+                    "buy_price": close_price,
+                    "week": idx.strftime("%d-%b-%Y")
+                }
+        else:
+            # We have reached candles older than the signal date
+            break
 
     return {
         "status": "⏳ Monitoring",
@@ -144,13 +164,15 @@ async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chat_id = update.message.chat_id
         breakout_level = get_breakout_level(chat_id)
-        info = get_breakout_info(breakout_level)
+        signal_date = get_signal_date(chat_id)
+        info = get_breakout_info(breakout_level, signal_date)
         current_price = get_current_price()
-        current_date_str = datetime.now().strftime('%d-%b-%Y %I:%M %p')
+        
+        signal_date_str = signal_date.strftime('%d-%b-%Y %I:%M %p')
 
         msg = (
             f"🚦 TCS SIGNAL\n\n"
-            f"Signal Date: {current_date_str}\n"
+            f"Signal Date: {signal_date_str}\n"
             f"Live Price: ₹{current_price}\n"
             f"Buy Price: Weekly close above ₹{breakout_level}\n\n"
         )
