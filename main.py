@@ -3,9 +3,34 @@ from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQuer
 import os
 import yfinance as yf
 import pandas as pd
+import json
+import difflib
 from datetime import datetime
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+STOCKS_DB = {}
+if os.path.exists("stocks.json"):
+    with open("stocks.json", "r") as f:
+        STOCKS_DB = json.load(f)
+
+def find_stock_ticker(user_input):
+    user_input_upper = user_input.upper()
+    
+    if user_input_upper in STOCKS_DB.values():
+        return user_input_upper
+    if user_input_upper in STOCKS_DB:
+        return STOCKS_DB[user_input_upper]
+        
+    company_names = list(STOCKS_DB.keys())
+    matches = difflib.get_close_matches(user_input_upper, company_names, n=1, cutoff=0.5)
+    
+    if matches:
+        return STOCKS_DB[matches[0]]
+        
+    if not user_input_upper.endswith(".NS"):
+        user_input_upper += ".NS"
+    return user_input_upper
 
 FOOTER = "\n\n━━━━━━━━━━━━\nCreated by Sai Venkatesh"
 
@@ -153,14 +178,18 @@ async def handle_price(message, ticker):
         hist = stock.history(period="5d")
 
         current_price = round(hist["Close"].iloc[-1], 2)
+        day_open = round(hist["Open"].iloc[-1], 2)
         day_high = round(hist["High"].iloc[-1], 2)
         day_low = round(hist["Low"].iloc[-1], 2)
+        day_close = round(hist["Close"].iloc[-1], 2)
 
         await message.reply_text(
             f"📊 {ticker} Price\n\n"
-            f"Current Price: ₹{current_price}\n"
+            f"Current Price: ₹{current_price}\n\n"
+            f"Day Open: ₹{day_open}\n"
             f"Day High: ₹{day_high}\n"
-            f"Day Low: ₹{day_low}"
+            f"Day Low: ₹{day_low}\n"
+            f"Day Close: ₹{day_close}"
             + FOOTER
         )
 
@@ -174,8 +203,8 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Choose a company:", reply_markup=reply_markup)
         return
         
-    ticker = context.args[0].upper()
-    if not ticker.endswith(".NS"): ticker += ".NS"
+    ticker_input = " ".join(context.args)
+    ticker = find_stock_ticker(ticker_input)
     await handle_price(update.message, ticker)
 
 
@@ -200,8 +229,8 @@ async def weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Choose a company:", reply_markup=reply_markup)
         return
         
-    ticker = context.args[0].upper()
-    if not ticker.endswith(".NS"): ticker += ".NS"
+    ticker_input = " ".join(context.args)
+    ticker = find_stock_ticker(ticker_input)
     await handle_weekly(update.message, ticker)
 
 
@@ -252,8 +281,8 @@ async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Choose a company:", reply_markup=reply_markup)
         return
         
-    ticker = context.args[0].upper()
-    if not ticker.endswith(".NS"): ticker += ".NS"
+    ticker_input = " ".join(context.args)
+    ticker = find_stock_ticker(ticker_input)
     await handle_signal(update.message, update.message.chat_id, ticker)
 
 
@@ -290,8 +319,8 @@ async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Choose a company:", reply_markup=reply_markup)
         return
         
-    ticker = context.args[0].upper()
-    if not ticker.endswith(".NS"): ticker += ".NS"
+    ticker_input = " ".join(context.args)
+    ticker = find_stock_ticker(ticker_input)
     await handle_breakdown(update.message, update.message.chat_id, ticker)
 
 
@@ -308,9 +337,10 @@ async def set_breakout(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         chat_id = update.message.chat_id
-        ticker = context.args[0].upper()
-        if not ticker.endswith(".NS"): ticker += ".NS"
-        level = float(context.args[1])
+        # price is the last arg, the rest is the company name
+        ticker_input = " ".join(context.args[:-1])
+        ticker = find_stock_ticker(ticker_input)
+        level = float(context.args[-1])
         
         set_breakout_level(chat_id, ticker, level)
         await update.message.reply_text(f"✅ Breakout level for {ticker} updated to ₹{level}" + FOOTER)
