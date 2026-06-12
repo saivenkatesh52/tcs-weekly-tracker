@@ -43,6 +43,13 @@ if os.path.exists("stocks.json"):
         STOCKS_DB = json.load(f)
 
 
+
+def get_currency_symbol(ticker):
+    indian_indices = {"^NSEI", "^NSEBANK", "^CNXFIN", "^NSEMDCP50"}
+    if ticker.endswith(".NS") or ticker.endswith(".BO") or ticker in indian_indices:
+        return "₹"
+    return "$"
+
 def ticker_has_data(symbol):
     try:
         hist = yf.Ticker(symbol).history(period="5d")
@@ -319,8 +326,8 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for ticker, data in trackers.items():
             current_price = get_current_price(ticker)
             msg += f"🔸 *{ticker}*\n"
-            msg += f"  • Live Price: ₹{current_price}\n"
-            msg += f"  • Breakout Level: ₹{data['breakout_level']}\n"
+            msg += f"  • Live Price: {get_currency_symbol(ticker)}{current_price}\n"
+            msg += f"  • Breakout Level: {get_currency_symbol(ticker)}{data['breakout_level']}\n"
         msg += "\n"
 
     await update.message.reply_text(msg.strip() + FOOTER, parse_mode="Markdown")
@@ -339,11 +346,11 @@ async def handle_price(message, ticker, is_callback=False):
 
         text = (
             f"📊 {ticker} Price\n\n"
-            f"Current Price: ₹{current_price}\n\n"
-            f"Day Open: ₹{day_open}\n"
-            f"Day High: ₹{day_high}\n"
-            f"Day Low: ₹{day_low}\n"
-            f"Day Close: ₹{day_close}"
+            f"Current Price: {get_currency_symbol(ticker)}{current_price}\n\n"
+            f"Day Open: {get_currency_symbol(ticker)}{day_open}\n"
+            f"Day High: {get_currency_symbol(ticker)}{day_high}\n"
+            f"Day Low: {get_currency_symbol(ticker)}{day_low}\n"
+            f"Day Close: {get_currency_symbol(ticker)}{day_close}"
             + FOOTER
         )
         if is_callback:
@@ -377,7 +384,7 @@ async def handle_history(message, ticker, timeframe, is_callback=False):
         msg = f"📅 {ticker} Last {TIMEFRAME_CONFIG[timeframe]['display_count']} {label} Closes\n\n"
 
         for idx, row in df.iterrows():
-            msg += f"{idx.strftime('%d-%b-%Y')} : ₹{round(row['Close'], 2)}\n"
+            msg += f"{idx.strftime('%d-%b-%Y')} : {get_currency_symbol(ticker)}{round(row['Close'], 2)}\n"
 
         if is_callback:
             await message.edit_text(msg + FOOTER)
@@ -461,8 +468,8 @@ async def handle_breakout_signal(message, chat_id, ticker, timeframe, is_callbac
         msg = (
             f"🚦 {ticker} {timeframe_label.upper()} SIGNAL\n\n"
             f"Signal Date: {signal_date_str}\n"
-            f"Live Price: ₹{current_price}\n"
-            f"Buy Price: {timeframe_label} close above ₹{breakout_level}\n\n"
+            f"Live Price: {get_currency_symbol(ticker)}{current_price}\n"
+            f"Buy Price: {timeframe_label} close above {get_currency_symbol(ticker)}{breakout_level}\n\n"
         )
 
         if info["buy_price"] is None:
@@ -474,9 +481,9 @@ async def handle_breakout_signal(message, chat_id, ticker, timeframe, is_callbac
             )
             msg += (
                 "Is Buy Price triggered? : Yes\n"
-                f"Breakout done and closed above ₹{breakout_level}\n"
+                f"Breakout done and closed above {get_currency_symbol(ticker)}{breakout_level}\n"
                 f"Triggered {timeframe_label}: {info['candle_date']}\n"
-                f"Difference: {diff_percent}% (from ₹{breakout_level})"
+                f"Difference: {diff_percent}% (from {get_currency_symbol(ticker)}{breakout_level})"
             )
 
         if is_callback:
@@ -540,14 +547,14 @@ async def handle_breakdown(message, chat_id, ticker, timeframe, is_callback=Fals
             
         df = get_timeframe_data(ticker, timeframe).tail(TIMEFRAME_CONFIG[timeframe]["display_count"])
         timeframe_label = TIMEFRAME_CONFIG[timeframe]["label"]
-        msg = f"⚠ {ticker} Last {timeframe_label} Closes Below ₹{breakout_level}\n\n"
+        msg = f"⚠ {ticker} Last {timeframe_label} Closes Below {get_currency_symbol(ticker)}{breakout_level}\n\n"
 
         found = False
         for idx, row in df.iterrows():
             close_price = round(row["Close"], 2)
             if close_price < breakout_level:
                 found = True
-                msg += f"{idx.strftime('%d-%b-%Y')} : ₹{close_price}\n"
+                msg += f"{idx.strftime('%d-%b-%Y')} : {get_currency_symbol(ticker)}{close_price}\n"
 
         if not found:
             msg += f"No breakdown candles found in the last {timeframe_label.lower()} window."
@@ -661,7 +668,7 @@ async def handle_set_breakout_command(update: Update, context: ContextTypes.DEFA
         ticker = find_stock_ticker(" ".join(ticker_parts))
         
         set_breakout_level(chat_id, timeframe, ticker, level)
-        await update.message.reply_text(f"✅ {TIMEFRAME_CONFIG[timeframe]['label']} breakout level for {ticker} updated to ₹{level}" + FOOTER)
+        await update.message.reply_text(f"✅ {TIMEFRAME_CONFIG[timeframe]['label']} breakout level for {ticker} updated to {get_currency_symbol(ticker)}{level}" + FOOTER)
         
     except ValueError:
         await update.message.reply_text("❌ Invalid number format." + FOOTER)
@@ -708,8 +715,8 @@ async def check_breakout_job(context: ContextTypes.DEFAULT_TYPE):
                 chat_id=chat_id,
                 text=(
                     f"🚨 {TIMEFRAME_CONFIG[timeframe]['label'].upper()} BREAKOUT ALERT [{slot}] 🚨\n\n"
-                    f"{ticker} is currently trading above ₹{breakout_level}!\n"
-                    f"Current Price: ₹{current_price}"
+                    f"{ticker} is currently trading above {get_currency_symbol(ticker)}{breakout_level}!\n"
+                    f"Current Price: {get_currency_symbol(ticker)}{current_price}"
                     + FOOTER
                 )
             )
@@ -812,7 +819,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif command.startswith("set_"):
         level = float(data[2])
         set_breakout_level(chat_id, timeframe, ticker, level)
-        await query.message.edit_text(f"✅ {TIMEFRAME_CONFIG[timeframe]['label']} breakout level for {ticker} updated to ₹{level}" + FOOTER)
+        await query.message.edit_text(f"✅ {TIMEFRAME_CONFIG[timeframe]['label']} breakout level for {ticker} updated to {get_currency_symbol(ticker)}{level}" + FOOTER)
     elif command.startswith("remove_"):
         state = get_timeframe_state(chat_id, timeframe)
         if ticker in state:
@@ -851,7 +858,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         state_timeframe = timeframe if timeframe in TIMEFRAMES else "weekly"
         level = float(message.text)
         set_breakout_level(chat_id, state_timeframe, ticker, level)
-        await message.reply_text(f"✅ {TIMEFRAME_CONFIG[state_timeframe]['label']} breakout level for {ticker} updated to ₹{level}" + FOOTER)
+        await message.reply_text(f"✅ {TIMEFRAME_CONFIG[state_timeframe]['label']} breakout level for {ticker} updated to {get_currency_symbol(ticker)}{level}" + FOOTER)
     elif base_action == "remove":
         state = get_timeframe_state(chat_id, timeframe)
         if ticker in state:
