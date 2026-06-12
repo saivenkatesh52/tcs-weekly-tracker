@@ -1,30 +1,97 @@
-
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import os
+import json
 import yfinance as yf
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
+BREAKOUT_LEVEL = 2260
+STATE_FILE = "tracker_state.json"
+
 FOOTER = "\n\n━━━━━━━━━━━━\nCreated by Sai Venkatesh"
 
+
+# -------------------------
+# STATE MANAGEMENT
+# -------------------------
+
+def load_state():
+    try:
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {"alert_sent": False}
+
+
+def save_state(state):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
+
+
+# -------------------------
+# DATA FUNCTIONS
+# -------------------------
+
+def get_current_price():
+    tcs = yf.Ticker("TCS.NS")
+    hist = tcs.history(period="5d")
+
+    if len(hist) == 0:
+        return None
+
+    return round(hist["Close"].iloc[-1], 2)
+
+
+def get_weekly_data():
+    tcs = yf.Ticker("TCS.NS")
+    return tcs.history(period="6mo", interval="1wk")
+
+
+def get_breakout_info():
+    df = get_weekly_data()
+
+    for idx, row in df.iterrows():
+        close_price = round(row["Close"], 2)
+
+        if close_price > BREAKOUT_LEVEL:
+            return {
+                "status": "✅ Breakout Done",
+                "buy_price": close_price,
+                "week": idx.strftime("%d-%b-%Y")
+            }
+
+    return {
+        "status": "⏳ Monitoring",
+        "buy_price": None,
+        "week": None
+    }
+
+
+# -------------------------
+# COMMANDS
+# -------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📈 TCS Weekly Tracker Active\n\n"
         "Commands:\n"
-        "/start\n"
         "/status\n"
         "/price\n"
-        "/weekly"
+        "/weekly\n"
+        "/signal\n"
+        "/breakdown"
         + FOOTER
     )
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    current_price = get_current_price()
+
     await update.message.reply_text(
-        "📈 TCS Tracker Running\n"
-        "Breakout Level: ₹2260"
+        f"📈 TCS Tracker Running\n\n"
+        f"Current Price: ₹{current_price}\n"
+        f"Breakout Level: ₹{BREAKOUT_LEVEL}"
         + FOOTER
     )
 
@@ -49,28 +116,110 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(
             f"Error: {str(e)}"
-            + FOOTER
         )
 
 
 async def weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        tcs = yf.Ticker("TCS.NS")
-        df = tcs.history(period="3mo", interval="1wk")
+        df = get_weekly_data().tail(8)
 
         message = "📅 Last 8 Weekly Closes\n\n"
 
-        for idx, row in df.tail(8).iterrows():
-            message += f"{idx.strftime('%d-%b-%Y')} : ₹{round(row['Close'], 2)}\n"
+        for idx, row in df.iterrows():
+            message += (
+                f"{idx.strftime('%d-%b-%Y')} : "
+                f"₹{round(row['Close'], 2)}\n"
+            )
 
-        await update.message.reply_text(message + FOOTER)
+        await update.message.reply_text(
+            message + FOOTER
+        )
 
     except Exception as e:
         await update.message.reply_text(
             f"Error: {str(e)}"
-            + FOOTER
         )
 
+
+async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        info = get_breakout_info()
+        current_price = get_current_price()
+
+        if info["buy_price"] is None:
+
+            msg = (
+                "🚦 TCS SIGNAL\n\n"
+                "Status: ⏳ Monitoring\n\n"
+                f"Breakout Level: ₹{BREAKOUT_LEVEL}\n"
+                f"Current Price: ₹{current_price}"
+            )
+
+        else:
+
+            gain = round(
+                ((current_price - info["buy_price"])
+                 / info["buy_price"]) * 100,
+                2
+            )
+
+            msg = (
+                "🚦 TCS SIGNAL\n\n"
+                "Status: ✅ Breakout Done\n\n"
+                f"Buy Price: ₹{info['buy_price']}\n"
+                f"Breakout Week: {info['week']}\n"
+                f"Current Price: ₹{current_price}\n"
+                f"Return: {gain}%"
+            )
+
+        await update.message.reply_text(
+            msg + FOOTER
+        )
+
+    except Exception as e:
+        await update.message.reply_text(
+            f"Error: {str(e)}"
+        )
+
+
+async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        df = get_weekly_data()
+
+        message = (
+            f"⚠ Weekly Closes Below ₹{BREAKOUT_LEVEL}\n\n"
+        )
+
+        found = False
+
+        for idx, row in df.iterrows():
+
+            close_price = round(row["Close"], 2)
+
+            if close_price < BREAKOUT_LEVEL:
+                found = True
+
+                message += (
+                    f"{idx.strftime('%d-%b-%Y')} : "
+                    f"₹{close_price}\n"
+                )
+
+        if not found:
+            message += "No breakdown candles found."
+
+        await update.message.reply_text(
+            message + FOOTER
+        )
+
+    except Exception as e:
+        await update.message.reply_text(
+            f"Error: {str(e)}"
+        )
+
+
+# -------------------------
+# MAIN
+# -------------------------
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
@@ -79,10 +228,11 @@ def main():
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("price", price))
     app.add_handler(CommandHandler("weekly", weekly))
+    app.add_handler(CommandHandler("signal", signal))
+    app.add_handler(CommandHandler("breakdown", breakdown))
 
     app.run_polling()
 
 
 if __name__ == "__main__":
     main()
-
