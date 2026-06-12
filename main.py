@@ -146,17 +146,23 @@ def get_breakout_info(ticker, breakout_level, signal_date):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📈 TCS Weekly Tracker Active\n\n"
-        "Commands:\n"
-        "/status\n"
-        "/price\n"
-        "/weekly\n"
-        "/signal\n"
-        "/breakdown\n"
-        "/set_breakout <price>\n"
-        "/monitor\n"
-        "/stop_monitor"
-        + FOOTER
+        "👋 Welcome to the **Stock Weekly Tracker**!\n\n"
+        "I can help you monitor breakout levels for any NSE stock and alert you automatically. Here are the commands you can use:\n\n"
+        "🛠 **Setup & Manage**\n"
+        "🔹 /set_breakout <price> - Set a new breakout level\n"
+        "🔹 /remove - Stop tracking a company\n"
+        "🔹 /status - View all your active trackers\n\n"
+        "📊 **Market Data**\n"
+        "🔹 /price - Get today's live price and OHLC\n"
+        "🔹 /weekly - View the last 8 weekly closes\n"
+        "🔹 /signal - Check if a breakout has triggered\n"
+        "🔹 /breakdown - See recent weeks that failed the breakout level\n\n"
+        "⏰ **Automation**\n"
+        "🔹 /monitor - Start background alerts (checks every 6 hours)\n"
+        "🔹 /stop_monitor - Stop background alerts\n\n"
+        "💡 *Tip:* You don't need to type the exact ticker! You can just type `/price reliance` and I will find it for you."
+        + FOOTER,
+        parse_mode="Markdown"
     )
 
 
@@ -164,15 +170,21 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
     state = get_chat_state(chat_id)
 
-    msg = "📈 Tracker Status\n\n"
+    if not state:
+        await update.message.reply_text("You are not tracking any companies right now. Use /set_breakout to get started!" + FOOTER)
+        return
+
+    msg = "📋 **Your Tracked Stocks**\n\n"
     for ticker, data in state.items():
         current_price = get_current_price(ticker)
-        msg += f"🔸 **{ticker}**\nLive Price: ₹{current_price}\nBreakout Level: ₹{data['breakout_level']}\n\n"
+        msg += f"🔸 *{ticker.replace('.NS', '')}*\n"
+        msg += f"  • Live Price: ₹{current_price}\n"
+        msg += f"  • Breakout Level: ₹{data['breakout_level']}\n\n"
 
-    await update.message.reply_text(msg.strip() + FOOTER)
+    await update.message.reply_text(msg.strip() + FOOTER, parse_mode="Markdown")
 
 
-async def handle_price(message, ticker):
+async def handle_price(message, ticker, is_callback=False):
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="5d")
@@ -183,7 +195,7 @@ async def handle_price(message, ticker):
         day_low = round(hist["Low"].iloc[-1], 2)
         day_close = round(hist["Close"].iloc[-1], 2)
 
-        await message.reply_text(
+        text = (
             f"📊 {ticker} Price\n\n"
             f"Current Price: ₹{current_price}\n\n"
             f"Day Open: ₹{day_open}\n"
@@ -192,9 +204,16 @@ async def handle_price(message, ticker):
             f"Day Close: ₹{day_close}"
             + FOOTER
         )
+        if is_callback:
+            await message.edit_text(text)
+        else:
+            await message.reply_text(text)
 
     except Exception as e:
-        await message.reply_text(f"Error fetching data for {ticker}: {str(e)}")
+        if is_callback:
+            await message.edit_text(f"Error fetching data for {ticker}: {str(e)}")
+        else:
+            await message.reply_text(f"Error fetching data for {ticker}: {str(e)}")
 
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -208,7 +227,7 @@ async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_price(update.message, ticker)
 
 
-async def handle_weekly(message, ticker):
+async def handle_weekly(message, ticker, is_callback=False):
     try:
         df = get_weekly_data(ticker).tail(8)
 
@@ -217,10 +236,16 @@ async def handle_weekly(message, ticker):
         for idx, row in df.iterrows():
             msg += f"{idx.strftime('%d-%b-%Y')} : ₹{round(row['Close'], 2)}\n"
 
-        await message.reply_text(msg + FOOTER)
+        if is_callback:
+            await message.edit_text(msg + FOOTER)
+        else:
+            await message.reply_text(msg + FOOTER)
 
     except Exception as e:
-        await message.reply_text(f"Error: {str(e)}")
+        if is_callback:
+            await message.edit_text(f"Error: {str(e)}")
+        else:
+            await message.reply_text(f"Error: {str(e)}")
 
 
 async def weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -234,12 +259,16 @@ async def weekly(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_weekly(update.message, ticker)
 
 
-async def handle_signal(message, chat_id, ticker):
+async def handle_signal(message, chat_id, ticker, is_callback=False):
     try:
         breakout_level = get_breakout_level(chat_id, ticker)
         
         if breakout_level is None:
-            await message.reply_text(f"No breakout level set for {ticker}. Use /set_breakout <price> to set one." + FOOTER)
+            err = f"No breakout level set for {ticker}. Use /set_breakout <price> to set one." + FOOTER
+            if is_callback:
+                await message.edit_text(err)
+            else:
+                await message.reply_text(err)
             return
             
         signal_date = get_signal_date(chat_id, ticker)
@@ -269,10 +298,16 @@ async def handle_signal(message, chat_id, ticker):
                 f"Difference: {diff_percent}% (from ₹{breakout_level})"
             )
 
-        await message.reply_text(msg + FOOTER)
+        if is_callback:
+            await message.edit_text(msg + FOOTER)
+        else:
+            await message.reply_text(msg + FOOTER)
 
     except Exception as e:
-        await message.reply_text(f"Error: {str(e)}")
+        if is_callback:
+            await message.edit_text(f"Error: {str(e)}")
+        else:
+            await message.reply_text(f"Error: {str(e)}")
 
 
 async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -286,12 +321,16 @@ async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await handle_signal(update.message, update.message.chat_id, ticker)
 
 
-async def handle_breakdown(message, chat_id, ticker):
+async def handle_breakdown(message, chat_id, ticker, is_callback=False):
     try:
         breakout_level = get_breakout_level(chat_id, ticker)
         
         if breakout_level is None:
-            await message.reply_text(f"No breakout level set for {ticker}." + FOOTER)
+            err = f"No breakout level set for {ticker}." + FOOTER
+            if is_callback:
+                await message.edit_text(err)
+            else:
+                await message.reply_text(err)
             return
             
         df = get_weekly_data(ticker).tail(8)
@@ -307,10 +346,16 @@ async def handle_breakdown(message, chat_id, ticker):
         if not found:
             msg += "No breakdown candles found in the last 2 months."
 
-        await message.reply_text(msg + FOOTER)
+        if is_callback:
+            await message.edit_text(msg + FOOTER)
+        else:
+            await message.reply_text(msg + FOOTER)
 
     except Exception as e:
-        await message.reply_text(f"Error: {str(e)}")
+        if is_callback:
+            await message.edit_text(f"Error: {str(e)}")
+        else:
+            await message.reply_text(f"Error: {str(e)}")
 
 
 async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -322,6 +367,29 @@ async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ticker_input = " ".join(context.args)
     ticker = find_stock_ticker(ticker_input)
     await handle_breakdown(update.message, update.message.chat_id, ticker)
+
+
+async def remove(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    state = get_chat_state(chat_id)
+    
+    if not state:
+        await update.message.reply_text("You are not tracking any companies." + FOOTER)
+        return
+        
+    if not context.args:
+        reply_markup = get_company_keyboard("remove", chat_id)
+        await update.message.reply_text("Choose a company to stop tracking:", reply_markup=reply_markup)
+        return
+        
+    ticker_input = " ".join(context.args)
+    ticker = find_stock_ticker(ticker_input)
+    
+    if ticker in state:
+        del state[ticker]
+        await update.message.reply_text(f"🗑️ Stopped tracking {ticker}." + FOOTER)
+    else:
+        await update.message.reply_text(f"You are not tracking {ticker}." + FOOTER)
 
 
 async def set_breakout(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -399,17 +467,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = query.message.chat_id
     
     if command == "price":
-        await handle_price(query.message, ticker)
+        await handle_price(query.message, ticker, is_callback=True)
     elif command == "weekly":
-        await handle_weekly(query.message, ticker)
+        await handle_weekly(query.message, ticker, is_callback=True)
     elif command == "signal":
-        await handle_signal(query.message, chat_id, ticker)
+        await handle_signal(query.message, chat_id, ticker, is_callback=True)
     elif command == "breakdown":
-        await handle_breakdown(query.message, chat_id, ticker)
+        await handle_breakdown(query.message, chat_id, ticker, is_callback=True)
     elif command == "set":
         level = float(data[2])
         set_breakout_level(chat_id, ticker, level)
         await query.message.edit_text(f"✅ Breakout level for {ticker} updated to ₹{level}" + FOOTER)
+    elif command == "remove":
+        state = get_chat_state(chat_id)
+        if ticker in state:
+            del state[ticker]
+            await query.message.edit_text(f"🗑️ Stopped tracking {ticker}." + FOOTER)
+        else:
+            await query.message.edit_text(f"You are not tracking {ticker}." + FOOTER)
 
 
 # -------------------------
@@ -427,6 +502,7 @@ def main():
     app.add_handler(CommandHandler("signal", signal))
     app.add_handler(CommandHandler("breakdown", breakdown))
     app.add_handler(CommandHandler("set_breakout", set_breakout))
+    app.add_handler(CommandHandler("remove", remove))
     app.add_handler(CommandHandler("monitor", monitor))
     app.add_handler(CommandHandler("stop_monitor", stop_monitor))
 
