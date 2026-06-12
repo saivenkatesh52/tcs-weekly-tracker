@@ -482,12 +482,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_text(f"You are not tracking {ticker}." + FOOTER)
 
 
+async def post_init(application: Application):
+    await application.bot.set_my_commands([
+        ("start", "Start the bot and see instructions"),
+        ("status", "View all your active tracked stocks"),
+        ("price", "Get today's live price and OHLC"),
+        ("weekly", "View the last 8 weekly closes"),
+        ("signal", "Check if a breakout has triggered"),
+        ("breakdown", "See recent weeks that failed breakout"),
+        ("set_breakout", "Set a new breakout level"),
+        ("remove", "Stop tracking a company"),
+        ("monitor", "Start background alerts"),
+        ("stop_monitor", "Stop background alerts")
+    ])
+
 # -------------------------
 # MAIN
 # -------------------------
 
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
