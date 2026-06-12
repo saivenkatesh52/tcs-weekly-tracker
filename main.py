@@ -7,7 +7,6 @@ from datetime import datetime
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-BREAKOUT_LEVEL = 2260
 STATE_FILE = "tracker_state.json"
 
 FOOTER = "\n\n━━━━━━━━━━━━\nCreated by Sai Venkatesh"
@@ -28,6 +27,17 @@ def load_state():
 def save_state(state):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f)
+
+
+def get_breakout_level():
+    state = load_state()
+    return state.get("breakout_level", 2260)
+
+
+def set_breakout_level(level):
+    state = load_state()
+    state["breakout_level"] = level
+    save_state(state)
 
 
 # -------------------------
@@ -51,11 +61,12 @@ def get_weekly_data():
 
 def get_breakout_info():
     df = get_weekly_data()
+    breakout_level = get_breakout_level()
 
     for idx, row in df.iloc[::-1].iterrows():
         close_price = round(row["Close"], 2)
 
-        if close_price > BREAKOUT_LEVEL:
+        if close_price > breakout_level:
             return {
                 "status": "✅ Breakout Done",
                 "buy_price": close_price,
@@ -81,18 +92,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/price\n"
         "/weekly\n"
         "/signal\n"
-        "/breakdown"
+        "/breakdown\n"
+        "/set_breakout <price>"
         + FOOTER
     )
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_price = get_current_price()
+    breakout_level = get_breakout_level()
 
     await update.message.reply_text(
         f"📈 TCS Tracker Running\n\n"
         f"Current Price: ₹{current_price}\n"
-        f"Breakout Level: ₹{BREAKOUT_LEVEL}"
+        f"Breakout Level: ₹{breakout_level}"
         + FOOTER
     )
 
@@ -147,26 +160,27 @@ async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         info = get_breakout_info()
         current_price = get_current_price()
         current_date_str = datetime.now().strftime('%d-%b-%Y %I:%M %p')
+        breakout_level = get_breakout_level()
 
         msg = (
             f"🚦 TCS SIGNAL\n\n"
             f"Signal Date: {current_date_str}\n"
             f"Live Price: ₹{current_price}\n"
-            f"Buy Price: Weekly close above ₹{BREAKOUT_LEVEL}\n\n"
+            f"Buy Price: Weekly close above ₹{breakout_level}\n\n"
         )
 
         if info["buy_price"] is None:
             msg += "Is Buy Price triggered? : No"
         else:
             diff_percent = round(
-                ((current_price - BREAKOUT_LEVEL) / BREAKOUT_LEVEL) * 100,
+                ((current_price - breakout_level) / breakout_level) * 100,
                 2
             )
             msg += (
                 "Is Buy Price triggered? : Yes\n"
-                f"Breakout done and closed above ₹{BREAKOUT_LEVEL}\n"
+                f"Breakout done and closed above ₹{breakout_level}\n"
                 f"Triggered Week: {info['week']}\n"
-                f"Difference: {diff_percent}% (from ₹{BREAKOUT_LEVEL})"
+                f"Difference: {diff_percent}% (from ₹{breakout_level})"
             )
 
         await update.message.reply_text(
@@ -183,9 +197,10 @@ async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Get data for the last 2 months (~8 weeks)
         df = get_weekly_data().tail(8)
+        breakout_level = get_breakout_level()
 
         message = (
-            f"⚠ Last 2 Months - Weekly Closes Below ₹{BREAKOUT_LEVEL}\n\n"
+            f"⚠ Last 2 Months - Weekly Closes Below ₹{breakout_level}\n\n"
         )
 
         found = False
@@ -194,7 +209,7 @@ async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             close_price = round(row["Close"], 2)
 
-            if close_price < BREAKOUT_LEVEL:
+            if close_price < breakout_level:
                 found = True
 
                 message += (
@@ -215,6 +230,20 @@ async def breakdown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def set_breakout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if not context.args:
+            await update.message.reply_text("Please provide a price. Usage: /set_breakout 2300" + FOOTER)
+            return
+        
+        level = float(context.args[0])
+        set_breakout_level(level)
+        await update.message.reply_text(f"✅ Breakout level updated to ₹{level}" + FOOTER)
+        
+    except ValueError:
+        await update.message.reply_text("❌ Invalid number format." + FOOTER)
+
+
 # -------------------------
 # MAIN
 # -------------------------
@@ -228,6 +257,7 @@ def main():
     app.add_handler(CommandHandler("weekly", weekly))
     app.add_handler(CommandHandler("signal", signal))
     app.add_handler(CommandHandler("breakdown", breakdown))
+    app.add_handler(CommandHandler("set_breakout", set_breakout))
 
     app.run_polling()
 
