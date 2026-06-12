@@ -66,12 +66,7 @@ MEMORY_STATE = {}
 
 def get_chat_state(chat_id):
     if chat_id not in MEMORY_STATE:
-        MEMORY_STATE[chat_id] = {
-            "TCS.NS": {
-                "breakout_level": 2260,
-                "signal_date": datetime.now()
-            }
-        }
+        MEMORY_STATE[chat_id] = {}
     return MEMORY_STATE[chat_id]
 
 def get_breakout_level(chat_id, ticker):
